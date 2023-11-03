@@ -17,11 +17,12 @@ classifiers = [
 keywords = ["streamlit", "redis", "cache"]
 dependencies = [
     "streamlit >= 1.27.0",
+    "redis >= 5.0.1",
 ]
 requires-python = ">=3.8"
 
 [project.optional-dependencies]
-dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
+dev = ["black", "isort", "pytest", "ipython"]
 
 [project.urls]
 Homepage = "https://github.com/kajarenc/streamlit-redis"
