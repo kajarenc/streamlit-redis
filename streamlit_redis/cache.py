@@ -7,12 +7,17 @@ from streamlit.runtime.caching.storage import (
     CacheStorageKeyNotFoundError,
     CacheStorageManager,
 )
-
-
+from streamlit.runtime.secrets import secrets_singleton
 import redis
 
 
 class RedisCacheStorageManager(CacheStorageManager):
+    @classmethod
+    def from_secrets(cls):
+        secrets_singleton.load_if_toml_exists()
+        app_prefix = "AAA"
+        redis_dsn = secrets_singleton["streamlit_redis"]["dsn"]
+        return cls(redis_dsn, app_prefix)
 
     def __init__(self, dsn: str, app_prefix):
         self.dsn: str = dsn
@@ -23,8 +28,9 @@ class RedisCacheStorageManager(CacheStorageManager):
         """Creates a new cache storage instance"""
         try:
             self.redis_client.ping()
-        except Exception:
-            print("Redis doesn't work")
+        except Exception as e:
+            # TODO: raise a more specific exception here
+            raise e
 
         return RedisCacheStorage(
             context=context,
@@ -84,8 +90,8 @@ class RedisCacheStorage(CacheStorage):
         redis_key = f"{self.function_key}:{key}"
         try:
             self.redis_client.set(redis_key, value, ex=self._ttl_seconds)
-        except Exception:
-            raise CacheStorageError("Error while setting key in redis cache")
+        except Exception as e:
+            raise CacheStorageError("Error while setting key in redis cache") from e
 
     def delete(self, key: str) -> None:
         """Delete a given key"""
