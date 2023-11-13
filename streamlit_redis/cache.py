@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from streamlit.runtime.caching.storage import (
     CacheStorage,
     CacheStorageContext,
@@ -7,16 +9,22 @@ from streamlit.runtime.caching.storage import (
     CacheStorageKeyNotFoundError,
     CacheStorageManager,
 )
+from streamlit.logger import get_logger
 from streamlit.runtime.secrets import secrets_singleton
 import redis
+
+_LOGGER = get_logger(__name__)
 
 
 class RedisCacheStorageManager(CacheStorageManager):
     @classmethod
     def from_secrets(cls):
         secrets_singleton.load_if_toml_exists()
-        app_prefix = "AAA"
         redis_dsn = secrets_singleton["streamlit_redis"]["dsn"]
+        try:
+            app_prefix = secrets_singleton["streamlit_redis"]["app_prefix"]
+        except KeyError:
+            app_prefix = str(uuid.uuid4())
         return cls(redis_dsn, app_prefix)
 
     def __init__(self, dsn: str, app_prefix):
@@ -39,12 +47,14 @@ class RedisCacheStorageManager(CacheStorageManager):
         )
 
     def clear_all(self) -> None:
-        self.redis_client.flushdb()
+        self.redis_client.delete(*self.redis_client.keys(f"{self.app_prefix}:*"))
 
     def check_context(self, context: CacheStorageContext) -> None:
-        pass
-        # TODO: check if the context is valid for the storage manager, raise warning
-        #  if max_entries is not None
+        if context.persist == "disk":
+            _LOGGER.warning(
+                f"The cached function '{context.function_display_name}' has a persist='disk' "
+                "that will be ignored. RedisCacheStorageManager currently doesn't support persist option."
+            )
 
 
 class RedisCacheStorage(CacheStorage):
@@ -68,6 +78,9 @@ class RedisCacheStorage(CacheStorage):
         self.app_prefix = app_prefix
         self.redis_client = redis_client
 
+    def make_redis_key(self, suffix) -> str:
+        return ":".join((self.app_prefix, self.function_key, suffix))
+
     def get(self, key: str) -> bytes:
         """Returns the stored value for the key.
 
@@ -77,7 +90,7 @@ class RedisCacheStorage(CacheStorage):
             Raised if the key is not in the storage.
         """
         try:
-            redis_key = f"{self.function_key}:{key}"
+            redis_key = self.make_redis_key(key)
             result = self.redis_client.get(redis_key)
             if result is None:
                 raise Exception("Key not found in redis cache")
@@ -87,7 +100,7 @@ class RedisCacheStorage(CacheStorage):
 
     def set(self, key: str, value: bytes) -> None:
         """Sets the value for a given key"""
-        redis_key = f"{self.function_key}:{key}"
+        redis_key = self.make_redis_key(key)
         try:
             self.redis_client.set(redis_key, value, ex=self._ttl_seconds)
         except Exception as e:
@@ -95,7 +108,7 @@ class RedisCacheStorage(CacheStorage):
 
     def delete(self, key: str) -> None:
         """Delete a given key"""
-        redis_key = f"{self.function_key}:{key}"
+        redis_key = self.make_redis_key(key)
         try:
             self.redis_client.delete(redis_key)
         except Exception:
@@ -103,7 +116,8 @@ class RedisCacheStorage(CacheStorage):
 
     def clear(self) -> None:
         """Remove all keys for the storage"""
+        redis_key_pattern = self.make_redis_key("*")
         try:
-            self.redis_client.delete(*self.redis_client.keys(f"{self.function_key}:*"))
+            self.redis_client.delete(*self.redis_client.keys(redis_key_pattern))
         except Exception:
             raise CacheStorageError("Error while clearing redis cache")
